@@ -103,11 +103,22 @@ jobs:
             msstore publish $pkg.FullName -id $productId --noCommit
             if ($LASTEXITCODE -ne 0) { throw "msstore publish (draft) failed ($LASTEXITCODE)" }
           } else {
-            # Ensure a pending draft exists. `msstore publish` creates one before it throws
-            # its first-submission error, so run it only if there's no submission yet and
-            # tolerate the known failure.
-            msstore submission get $productId *> $null
-            if ($LASTEXITCODE -ne 0) {
+            # A draft stuck in CommitFailed can be neither updated nor re-committed (409
+            # InvalidState) - the API's own remedy is delete + recreate. Proven on GTerminal.
+            msstore submission get $productId | Out-File -Encoding utf8 probe.txt
+            $probeOk = $LASTEXITCODE -eq 0
+            if ($probeOk) {
+              $pt = Get-Content -Raw probe.txt
+              $probe = ($pt.Substring($pt.IndexOf('{')) -replace "\r?\n[ \t]*", '') | ConvertFrom-Json -Depth 50
+              if ($probe.Status -eq 'CommitFailed') {
+                Write-Host "Pending submission is CommitFailed - deleting and recreating."
+                msstore submission delete $productId --no-confirm
+                $probeOk = $false
+              }
+            }
+            if (-not $probeOk) {
+              # Ensure a pending draft exists. `msstore publish` creates one before it throws
+              # its first-submission error - tolerate that known failure.
               msstore publish $pkg.FullName -id $productId --noCommit
               Write-Host "(expected first-submission failure above - the pending draft now exists)"
               msstore submission get $productId *> $null

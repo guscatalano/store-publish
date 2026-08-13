@@ -48,8 +48,14 @@ function Get-JsonBody([string]$path) {
 }
 function Copy-Json($o) { $o | ConvertTo-Json -Depth 50 | ConvertFrom-Json -Depth 50 }
 function Set-ManagedFields($base, $listing) {
-  foreach ($k in $managed) { if ($listing.PSObject.Properties.Name -contains $k) { $base.$k = $listing.$k } }
-  if ($script:ReleaseNotesOverride) { $base.ReleaseNotes = $script:ReleaseNotesOverride }
+  # Add-Member -Force instead of plain assignment: the API's GET response omits fields it
+  # treats as deprecated (e.g. PrivacyPolicy), and assigning to a missing property throws.
+  foreach ($k in $managed) {
+    if ($listing.PSObject.Properties.Name -contains $k) {
+      $base | Add-Member -NotePropertyName $k -NotePropertyValue $listing.$k -Force
+    }
+  }
+  if ($script:ReleaseNotesOverride) { $base | Add-Member -NotePropertyName 'ReleaseNotes' -NotePropertyValue $script:ReleaseNotesOverride -Force }
 }
 function Assert-Limits($loc, $b) {
   if ($b.Description.Length -gt 10000) { throw "[$loc] Description > 10000" }
