@@ -40,8 +40,15 @@ if ([string]::IsNullOrWhiteSpace($url)) {
 $zip = Join-Path $WorkDir ("subupload_" + [guid]::NewGuid().ToString('N') + ".zip")
 try {
   Write-Host "Downloading current submission zip..."
-  Invoke-WebRequest -Uri $url -Method Get -OutFile $zip -ErrorAction Stop | Out-Null
-  Write-Host ("  got {0:N0} bytes" -f (Get-Item $zip).Length)
+  try {
+    Invoke-WebRequest -Uri $url -Method Get -OutFile $zip -ErrorAction Stop | Out-Null
+    Write-Host ("  got {0:N0} bytes" -f (Get-Item $zip).Length)
+  } catch {
+    # A brand-new submission has no blob yet (404) - start from an empty zip.
+    Write-Host "  no existing zip (fresh submission) - creating a new one."
+    Remove-Item -LiteralPath $zip -ErrorAction SilentlyContinue
+    [System.IO.Compression.ZipFile]::Open($zip, 'Create').Dispose()
+  }
 
   $z = [System.IO.Compression.ZipFile]::Open($zip, 'Update')
   try {

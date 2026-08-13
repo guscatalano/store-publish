@@ -88,9 +88,32 @@ jobs:
           if (-not $pkg) { throw "No .msix/.appx/.msixupload found in artifact '${{ inputs.package-artifact }}'" }
           Write-Host "Package: $($pkg.FullName)"
 
-          # 1) Create/refresh the pending draft with the package, but DON'T commit yet.
-          msstore publish $pkg.FullName -id $productId --noCommit
-          if ($LASTEXITCODE -ne 0) { throw "msstore publish (draft) failed ($LASTEXITCODE)" }
+          # A product that has never PUBLISHED can't go through `msstore publish` — the CLI
+          # refuses loose packages on a first submission (NotImplementedException). Detect
+          # that case and drive the raw submission API instead: the package rides the same
+          # upload zip as the screenshots, referenced via ApplicationPackages=PendingUpload.
+          msstore apps get $productId | Out-File -Encoding utf8 app.txt
+          $appText = Get-Content -Raw app.txt
+          $app = ($appText.Substring($appText.IndexOf('{')) -replace "\r?\n[ \t]*", '') | ConvertFrom-Json -Depth 20
+          $isFirst = -not $app.LastPublishedApplicationSubmission
+          if ($isFirst) { Write-Host "First submission for $productId - package goes through the upload zip." }
+
+          if (-not $isFirst) {
+            # 1) Create/refresh the pending draft with the package, but DON'T commit yet.
+            msstore publish $pkg.FullName -id $productId --noCommit
+            if ($LASTEXITCODE -ne 0) { throw "msstore publish (draft) failed ($LASTEXITCODE)" }
+          } else {
+            # Ensure a pending draft exists. `msstore publish` creates one before it throws
+            # its first-submission error, so run it only if there's no submission yet and
+            # tolerate the known failure.
+            msstore submission get $productId *> $null
+            if ($LASTEXITCODE -ne 0) {
+              msstore publish $pkg.FullName -id $productId --noCommit
+              Write-Host "(expected first-submission failure above - the pending draft now exists)"
+              msstore submission get $productId *> $null
+              if ($LASTEXITCODE -ne 0) { throw "Could not create a pending submission for $productId" }
+            }
+          }
 
           # 2) Pull the pending draft, merge listing-as-code (all locales) + screenshot refs.
           msstore submission get $productId | Out-File -Encoding utf8 raw.txt
@@ -100,13 +123,16 @@ jobs:
             $baseNotes = (Get-Content -Raw (Join-Path $listingDir 'listing.en-us.json') | ConvertFrom-Json).ReleaseNotes
             $notes = if ($ver) { "Version $ver. $baseNotes" } else { $baseNotes }
           }
+          $bsExtra = @{}
+          if ($isFirst) { $bsExtra['PackageFile'] = $pkg.FullName }
           ./.store-publish/scripts/Build-Submission.ps1 `
             -CurrentSubmission raw.txt `
             -ListingDir $listingDir `
             -ScreenshotDir (Join-Path $listingDir 'screenshots') `
             -OutFile product.json `
             -ScreenshotManifest manifest.txt `
-            -ReleaseNotes $notes
+            -ReleaseNotes $notes `
+            @bsExtra
 
           # 2b) Upload screenshots INTO the submission zip (GET zip, add images, PUT back) BEFORE
           # the metadata update — the Store legacy API keeps packages + images in one zip. No-op

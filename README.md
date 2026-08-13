@@ -54,6 +54,20 @@ fields in Partner Center get reverted on the next tag** — edit the repo's `sto
 instead. Unmanaged fields (pricing, availability, age ratings, gaming options) are never touched
 and stay managed in Partner Center.
 
+## First submissions (brand-new products)
+
+A product that has never been published takes a different path automatically: `msstore publish`
+refuses loose packages on first submissions, so the pipeline drives the raw submission API —
+it synthesizes the en-us listing from `listing.en-us.json`, ships the package inside the same
+upload zip as the screenshots (`ApplicationPackages: PendingUpload`), initializes
+`AllowTargetFutureDeviceFamilies` (Desktop only), and applies `store/properties.json`
+(`PriceId`, `ApplicationCategory`) if present. **Screenshots are mandatory on this path** — a
+first listing without images hangs the commit.
+
+The one thing that cannot be code: the **age rating questionnaire** (IARC) has no API. If the
+commit fails asking for age ratings, answer the questionnaire once in Partner Center and re-run
+the workflow.
+
 ## Troubleshooting
 
 - **Stuck pending submission** (a previous run died mid-flight): clear it once with

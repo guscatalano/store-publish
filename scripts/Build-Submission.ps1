@@ -21,7 +21,11 @@ param(
   [string] $ScreenshotDir = (Join-Path $PSScriptRoot 'screenshots'),
   [Parameter(Mandatory)] [string] $OutFile,
   [string] $ScreenshotManifest,
-  [string] $ReleaseNotes
+  [string] $ReleaseNotes,
+  # First-submission path: `msstore publish` refuses loose packages on a product's first
+  # submission, so the package must ride the same upload zip as the screenshots. Pass the
+  # local package path; it is added to ApplicationPackages (PendingUpload) + the manifest.
+  [string] $PackageFile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -117,6 +121,36 @@ foreach ($f in ($files | Where-Object { $_.Name -ne 'listing.en-us.json' })) {
     # No screenshots -> a new-locale listing would be "incomplete" and hang the commit. Skip it.
     Write-Host "SKIP $locale - no screenshots in $ScreenshotDir (a new-locale listing needs them); leaving it out."
   }
+}
+
+# The Ingestion API requires AllowTargetFutureDeviceFamilies to carry an explicit value for
+# all four platforms on PUT; a fresh submission ships it empty. Fill the gaps (Desktop on,
+# everything else off) without overriding values Partner Center already has.
+$atfdf = $product.AllowTargetFutureDeviceFamilies
+if ($null -eq $atfdf) {
+  $atfdf = [pscustomobject]@{}
+  $product | Add-Member -NotePropertyName 'AllowTargetFutureDeviceFamilies' -NotePropertyValue $atfdf -Force
+}
+foreach ($fam in 'Desktop','Mobile','Xbox','Holographic') {
+  if ($atfdf.PSObject.Properties.Name -notcontains $fam) {
+    $atfdf | Add-Member -NotePropertyName $fam -NotePropertyValue ($fam -eq 'Desktop')
+  }
+}
+
+if ($PackageFile) {
+  if (-not (Test-Path -LiteralPath $PackageFile)) { throw "PackageFile not found: $PackageFile" }
+  $pkgName = Split-Path $PackageFile -Leaf
+  if ($null -eq $product.ApplicationPackages) {
+    $product | Add-Member -NotePropertyName 'ApplicationPackages' -NotePropertyValue @() -Force
+  }
+  if (-not ($product.ApplicationPackages | Where-Object { $_.FileName -eq $pkgName })) {
+    $product.ApplicationPackages = @($product.ApplicationPackages) + [pscustomobject]@{
+      FileName = $pkgName; FileStatus = 'PendingUpload'
+      MinimumDirectXVersion = 'None'; MinimumSystemRam = 'None'
+    }
+  }
+  $manifest.Add("$pkgName|$((Resolve-Path -LiteralPath $PackageFile).Path)")
+  Write-Host "package: $pkgName (PendingUpload, added to upload manifest)"
 }
 
 # Optional submission-level properties (store/properties.json): pricing + category.
