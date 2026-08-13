@@ -110,8 +110,8 @@ jobs:
             if ($probeOk) {
               $pt = Get-Content -Raw probe.txt
               $probe = ($pt.Substring($pt.IndexOf('{')) -replace "\r?\n[ \t]*", '') | ConvertFrom-Json -Depth 50
-              if ($probe.Status -eq 'CommitFailed') {
-                Write-Host "Pending submission is CommitFailed - deleting and recreating."
+              if ($probe.Status -in 'CommitFailed','CertificationFailed') {
+                Write-Host "Pending submission is $($probe.Status) - deleting and recreating (it can be neither updated nor re-committed)."
                 msstore submission delete $productId --no-confirm
                 $probeOk = $false
               }
