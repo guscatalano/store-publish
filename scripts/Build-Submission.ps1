@@ -27,7 +27,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $managed = @('Title','ShortTitle','ShortDescription','Description',
-             'Keywords','Features','ReleaseNotes','CopyrightAndTrademarkInfo','LicenseTerms','DevStudio')
+             'Keywords','Features','ReleaseNotes','CopyrightAndTrademarkInfo','LicenseTerms','DevStudio',
+             'PrivacyPolicy','SupportContact','WebsiteUrl')
 
 function Get-JsonBody([string]$path) {
   $text = Get-Content -Raw -LiteralPath $path
@@ -73,7 +74,19 @@ $product = Get-JsonBody $CurrentSubmission | ConvertFrom-Json -Depth 50
 $script:ReleaseNotesOverride = if ($PSBoundParameters.ContainsKey('ReleaseNotes') -and $ReleaseNotes) { $ReleaseNotes } else { $null }
 
 $enus = $product.Listings.'en-us'
-if ($null -eq $enus) { throw "Submission has no Listings.en-us to use as the template." }
+if ($null -eq $enus) {
+  # First submission of a brand-new product: no listing exists yet, so synthesize the
+  # en-us listing from scratch (managed fields + images). A listing without images hangs
+  # the commit as "incomplete", so screenshots are mandatory on this path.
+  if (-not $haveShots) { throw "Submission has no Listings.en-us and there are no screenshots in $ScreenshotDir - a first listing cannot be created without images. Add store/screenshots/*.png." }
+  Write-Host "No Listings.en-us on the submission - creating it (first submission)."
+  $baseListing = [pscustomobject]@{}
+  foreach ($k in $managed) { $baseListing | Add-Member -NotePropertyName $k -NotePropertyValue $null }
+  $baseListing | Add-Member -NotePropertyName 'Images' -NotePropertyValue @()
+  $enus = [pscustomobject]@{ BaseListing = $baseListing; PlatformOverrides = [pscustomobject]@{} }
+  if ($null -eq $product.Listings) { $product | Add-Member -NotePropertyName 'Listings' -NotePropertyValue ([pscustomobject]@{}) -Force }
+  $product.Listings | Add-Member -NotePropertyName 'en-us' -NotePropertyValue $enus -Force
+}
 
 $files = Get-ChildItem -LiteralPath $ListingDir -Filter 'listing.*.json' | Sort-Object Name
 $enusFile = $files | Where-Object { $_.Name -eq 'listing.en-us.json' }
@@ -103,6 +116,25 @@ foreach ($f in ($files | Where-Object { $_.Name -ne 'listing.en-us.json' })) {
   } else {
     # No screenshots -> a new-locale listing would be "incomplete" and hang the commit. Skip it.
     Write-Host "SKIP $locale - no screenshots in $ScreenshotDir (a new-locale listing needs them); leaving it out."
+  }
+}
+
+# Optional submission-level properties (store/properties.json): pricing + category.
+# Only the keys present in the file are touched; everything else stays Partner Center-managed.
+$propsFile = Join-Path $ListingDir 'properties.json'
+if (Test-Path -LiteralPath $propsFile) {
+  $props = Get-Content -Raw -LiteralPath $propsFile | ConvertFrom-Json -Depth 10
+  if ($props.PSObject.Properties.Name -contains 'PriceId') {
+    if ($null -eq $product.Pricing) {
+      $product | Add-Member -NotePropertyName 'Pricing' -NotePropertyValue ([pscustomobject]@{
+        TrialPeriod = 'NoFreeTrial'; MarketSpecificPricings = [pscustomobject]@{}; Sales = @(); PriceId = $props.PriceId
+      }) -Force
+    } else { $product.Pricing.PriceId = $props.PriceId }
+    Write-Host "properties: PriceId = $($props.PriceId)"
+  }
+  if ($props.PSObject.Properties.Name -contains 'ApplicationCategory') {
+    $product | Add-Member -NotePropertyName 'ApplicationCategory' -NotePropertyValue $props.ApplicationCategory -Force
+    Write-Host "properties: ApplicationCategory = $($props.ApplicationCategory)"
   }
 }
 
