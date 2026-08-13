@@ -64,9 +64,16 @@ upload zip as the screenshots (`ApplicationPackages: PendingUpload`), initialize
 (`PriceId`, `ApplicationCategory`) if present. **Screenshots are mandatory on this path** — a
 first listing without images hangs the commit.
 
-The one thing that cannot be code: the **age rating questionnaire** (IARC) has no API. If the
-commit fails asking for age ratings, answer the questionnaire once in Partner Center and re-run
-the workflow.
+Exactly two things cannot be code — both are one-time-per-product Partner Center UI fields that
+persist for every future submission (proven on GTerminal's first submission, Aug 2026):
+
+1. the **age rating questionnaire** (IARC) — no API at all;
+2. the **Privacy policy URL** (Properties page) — the `BaseListing.PrivacyPolicy` field is
+   deprecated and silently dropped by the API, and the submission resource has no privacy field.
+
+If the commit fails on either (age rating errors are API-visible; the privacy URL surfaces as
+"validation errors which cannot be exposed via API"), set them once in Partner Center and re-run
+the workflow — the pipeline deletes and recreates a CommitFailed draft automatically.
 
 ## Troubleshooting
 
