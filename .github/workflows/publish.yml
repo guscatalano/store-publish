@@ -81,7 +81,10 @@ jobs:
             throw "No listing.en-us.json in $listingDir - listing-as-code is required by this pipeline."
           }
 
-          $pkg = Get-ChildItem -Recurse pkg -Include *.msix,*.appx,*.msixupload -File | Select-Object -First 1
+          # Prefer .msix/.appx (the msstore-publish path proven on findneedle) over .msixupload.
+          $pkg = Get-ChildItem -Recurse pkg -Include *.msix,*.appx,*.msixupload -File |
+            Sort-Object { @{'.msix'=0; '.appx'=1; '.msixupload'=2}[$_.Extension] } |
+            Select-Object -First 1
           if (-not $pkg) { throw "No .msix/.appx/.msixupload found in artifact '${{ inputs.package-artifact }}'" }
           Write-Host "Package: $($pkg.FullName)"
 
