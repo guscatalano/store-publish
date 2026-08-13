@@ -41,6 +41,9 @@ The reusable workflow ([.github/workflows/publish.yml](.github/workflows/publish
   template; new locales need `store/screenshots/` to exist or they're skipped).
 - `store/screenshots/*.png` — optional (PNG, ≥ 1366×768, ≤ 10). Present = replaces every
   locale's screenshot set on each release.
+- **Keywords must not contain other products' names** (Store policy 10.1.3 — certification
+  rejected "tmux" as "a product title not published by you"). Generic terms only; comparison
+  prose in the Description appears to be tolerated.
 - A packaging job producing the **unsigned** package (the Store signs on ingestion) with a
   version **higher than the last submission**, uploaded as an artifact.
 - The four repo secrets (same values for every app — they're seller-level, not per-app):
