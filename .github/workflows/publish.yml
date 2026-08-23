@@ -67,6 +67,11 @@ jobs:
 
       - name: Set up Microsoft Store CLI
         uses: microsoft/setup-msstore-cli@v1
+        with:
+          # Pinned: msstore-cli v0.4.x breaks every blob upload ("Error while uploading
+          # the application package" at 1%) — --uploadTimeout defaults to 0 when omitted,
+          # see https://github.com/microsoft/msstore-cli/issues/162. Unpin once fixed.
+          version: 0.3.9
 
       - name: Configure Store credentials
         run: msstore reconfigure --tenantId ${{ secrets.STORE_TENANT_ID }} --clientId ${{ secrets.STORE_CLIENT_ID }} --clientSecret ${{ secrets.STORE_CLIENT_SECRET }} --sellerId ${{ secrets.STORE_SELLER_ID }}
