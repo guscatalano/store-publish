@@ -51,22 +51,22 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout caller repo (for listing-as-code)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Checkout store-publish scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: guscatalano/store-publish
           path: .store-publish
 
       - name: Download package artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: ${{ inputs.package-artifact }}
           path: pkg
 
       - name: Set up Microsoft Store CLI
-        uses: microsoft/setup-msstore-cli@v1
+        uses: microsoft/setup-msstore-cli@v1.4
         with:
           # Pinned: msstore-cli v0.4.x breaks every blob upload ("Error while uploading
           # the application package" at 1%) — --uploadTimeout defaults to 0 when omitted,
