@@ -1,0 +1,66 @@
+name: CI
+
+# This repo publishes to a customer-facing surface and had no tests at all.
+# The cost showed up as logic that read a PUBLISHED release as a draft in
+# progress, because it keyed on an exit code that is 0 either way.
+#
+# Two things run here, and both are cheap:
+#   - the slot decision's own tests
+#   - a parse of the PowerShell embedded in publish.yml, which otherwise
+#     only ever gets parsed on a tag, by which point a typo has failed a
+#     release rather than a build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Slot decision
+        run: pwsh -NoProfile -File scripts/Resolve-Slot.Tests.ps1
+
+      - name: The embedded PowerShell parses
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bad = 0
+          foreach ($wf in Get-ChildItem .github/workflows -Filter *.yml) {
+            $lines = Get-Content $wf.FullName
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+              if ($lines[$i] -notmatch '^\s*run:\s*\|\s*$') { continue }
+              # Only pwsh blocks: a `shell: pwsh` on the step, or this repo's
+              # default. Look back a couple of lines for it.
+              $head = ($lines[[Math]::Max(0, $i - 3)..$i] -join "`n")
+              if ($head -notmatch 'shell:\s*pwsh') { continue }
+              $indent = ($lines[$i] -replace '\S.*$', '').Length + 2
+              $body = @()
+              for ($j = $i + 1; $j -lt $lines.Count; $j++) {
+                if ($lines[$j].Trim() -ne '' -and $lines[$j].Length -gt 0 -and
+                    ($lines[$j] -replace '\S.*$', '').Length -lt $indent) { break }
+                $body += if ($lines[$j].Length -ge $indent) { $lines[$j].Substring($indent) } else { $lines[$j] }
+              }
+              # Render the Actions expressions the way the runner would. Left
+              # in, `"${{ inputs.x }}"` inside a double-quoted string is parsed
+              # by PowerShell as a variable and never parses.
+              $src = ($body -join "`n") -replace '\$\{\{[^}]*\}\}', 'SUBSTITUTED'
+              $errs = $null
+              [void][System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$errs)
+              if ($errs) {
+                Write-Host "FAIL $($wf.Name) line $($i + 2):" -ForegroundColor Red
+                $errs | ForEach-Object { Write-Host "  $($_.Extent.StartLineNumber): $($_.Message)" -ForegroundColor Red }
+                $bad++
+              } else {
+                Write-Host "PASS $($wf.Name) line $($i + 2) ($($body.Count) lines)" -ForegroundColor Green
+              }
+            }
+          }
+          if ($bad) { throw "$bad embedded script(s) do not parse" }

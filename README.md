@@ -24,6 +24,8 @@ publish:
 
 The reusable workflow ([.github/workflows/publish.yml](.github/workflows/publish.yml)) then:
 
+0. **Looks at the submission slot first.** A product has exactly one, and whatever is in it
+   decides whether this tag can be submitted at all — see [One slot](#one-slot-per-product).
 1. `msstore publish <pkg> -id <product-id> --noCommit` — pending draft with the package.
 2. `msstore submission get` → [`scripts/Build-Submission.ps1`](scripts/Build-Submission.ps1) —
    merge the caller's `store/listing.*.json` (all locales) into the draft. Store field limits are
@@ -78,10 +80,47 @@ If the commit fails on either (age rating errors are API-visible; the privacy UR
 "validation errors which cannot be exposed via API"), set them once in Partner Center and re-run
 the workflow — the pipeline deletes and recreates a CommitFailed draft automatically.
 
+## One slot per product
+
+The Store holds **exactly one submission per product**. While a version is in certification the
+next one cannot be created at all — so a tag can go green through every test and publish
+nothing, which is what it did on GTerminal 0.12.4, and why 0.12.9 was tagged on top of a
+still-certifying 0.12.8.
+
+Before creating the draft, the pipeline now asks what is in the slot and
+[decides](scripts/Resolve-Slot.ps1):
+
+| What is in the slot | What happens |
+| --- | --- |
+| Nothing | Publish. |
+| An uncommitted draft | Overwritten by `--noCommit`, as before. |
+| `CommitFailed` / `CertificationFailed` | Deleted and recreated — a wedged draft can be neither updated nor re-committed (409 InvalidState), and this is the API's own remedy. |
+| In flight (`Certification`, `PreProcessing`, …) | Stops, naming the version that holds the slot — unless `supersede-pending` is on, in which case it is deleted and the new tag takes the slot. |
+
+```yaml
+with:
+  product-id: 9NXXXXXXXXXX
+  package-artifact: store-package
+  supersede-pending: true   # newest tag wins; default false
+```
+
+Turn `supersede-pending` on only where the newest build is always the one you want out: it
+cancels a release that may be minutes from going live.
+
+**The pending submission is `msstore apps get` → `PendingApplicationSubmission.Id`, never the
+exit code of `msstore submission get`.** Asked with nothing pending, that command prints
+"Could not find a Pending Submission, but found the Last Published Submission", hands back the
+*published* one — and exits 0. Anything keyed on that exit code reads a finished release as a
+draft in progress.
+
 ## Troubleshooting
 
-- **Stuck pending submission** (a previous run died mid-flight): clear it once with
-  `msstore submission delete <product-id>`, then re-tag.
+- **Stuck pending submission** (a previous run died mid-flight): handled automatically now — a
+  `CommitFailed`/`CertificationFailed` draft is deleted and recreated. To clear one by hand:
+  `msstore submission delete <product-id>`.
+- **"already in the Store's one submission slot"**: an earlier version is still certifying. Wait
+  for it, cancel it in Partner Center, or set `supersede-pending: true`. See
+  [One slot](#one-slot-per-product).
 - **Version rejected**: the Store requires each submission's package version to be strictly
   higher than the last committed one. Bump and re-tag.
 - **`submission update` arg too long**: the merged product JSON travels as ONE command-line

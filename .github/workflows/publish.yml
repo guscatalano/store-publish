@@ -36,6 +36,18 @@ on:
         required: false
         type: string
         default: ''
+      supersede-pending:
+        description: >-
+          Newest tag wins. The Store holds ONE submission per product, so a
+          version tagged while an earlier one is still in certification cannot
+          be submitted at all. With this on, the earlier submission is deleted
+          and this one takes the slot; with it off (the default) the job stops
+          and says which version is holding it. Only turn this on where the
+          newest build is always the one you want out - it cancels a release
+          that may be minutes from going live.
+        required: false
+        type: boolean
+        default: false
     secrets:
       STORE_TENANT_ID:
         required: true
@@ -105,6 +117,45 @@ jobs:
           if ($isFirst) { Write-Host "First submission for $productId - package goes through the upload zip." }
 
           if (-not $isFirst) {
+            # The Store holds exactly ONE submission per product. Whatever is
+            # in that slot decides whether this tag can be submitted at all,
+            # so look before creating the draft - `msstore publish --noCommit`
+            # against an occupied slot fails with nothing useful in the error.
+            #
+            # Ask the APP which submission is pending, never `submission get`'s
+            # exit code: with nothing pending that command falls back to the
+            # last PUBLISHED submission and still exits 0, so its exit code
+            # cannot tell a finished release from a draft in progress.
+            $pendingId = "$($app.PendingApplicationSubmission.Id)"
+            $status = ''
+            $held = ''
+            if ($pendingId) {
+              msstore submission get $productId | Out-File -Encoding utf8 probe.txt
+              if ($LASTEXITCODE -ne 0) { throw "Submission $pendingId is pending on $productId but could not be read." }
+              $pt = Get-Content -Raw probe.txt
+              $probe = ($pt.Substring($pt.IndexOf('{')) -replace "\r?\n[ \t]*", '') | ConvertFrom-Json -Depth 50
+              $status = "$($probe.Status)"
+              $held = (($probe.ApplicationPackages | ForEach-Object { $_.Version }) -join ', ')
+              Write-Host "Pending submission $pendingId is $status (version $held)."
+            } else {
+              Write-Host "No pending submission - the slot is free."
+            }
+
+            # The decision itself lives in a script so it can be tested; see
+            # scripts/Resolve-Slot.Tests.ps1 for what each status means.
+            $action = & ./.store-publish/scripts/Resolve-Slot.ps1 `
+              -PendingId $pendingId -Status $status -HeldVersion $held `
+              -PackageName $pkg.Name `
+              -Supersede:([bool]::Parse('${{ inputs.supersede-pending }}'))
+
+            if ($action -eq 'delete') {
+              Write-Host "Clearing the slot: deleting submission $pendingId ($status)."
+              msstore submission delete $productId --no-confirm
+              if ($LASTEXITCODE -ne 0) {
+                throw "Could not delete submission $pendingId ($status), so $($pkg.Name) was NOT submitted. Cancel it in Partner Center, or wait for it to finish, then re-run this job."
+              }
+            }
+
             # 1) Create/refresh the pending draft with the package, but DON'T commit yet.
             msstore publish $pkg.FullName -id $productId --noCommit
             if ($LASTEXITCODE -ne 0) { throw "msstore publish (draft) failed ($LASTEXITCODE)" }
